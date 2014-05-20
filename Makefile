@@ -67,7 +67,7 @@ test_xemacs:: $(1)
 $(1): x/verilog-mode.elc
 	@echo
 	@echo == $(1)
-	VERILOG_MODE_THREAD=$(2) time $(XEMACS)  --batch -q -l x/verilog-mode.elc -l 0test.el
+	-VERILOG_MODE_THREAD=$(2) time $(XEMACS)  --batch -q -l x/verilog-mode.elc -l 0test.el
 endef
 
 $(eval $(call test_xemacs_sub,test_xemacs_1,1of5))
@@ -93,7 +93,7 @@ local:	.timestamps/local
 .timestamps/local:  verilog-mode.el
 	cp verilog-mode.el $(XEMACS_DEST)verilog-mode.el
 	rm -f $(XEMACS_DEST)verilog-mode.elc
-	$(XEMACS) $(ELC) $(XEMACS_DEST)verilog-mode.el
+	-$(XEMACS) $(ELC) $(XEMACS_DEST)verilog-mode.el
 	cp verilog-mode.el $(EMACS_DEST)verilog-mode.el
 	rm -f $(EMACS_DEST)verilog-mode.elc
 	$(EMACS) $(ELC) $(EMACS_DEST)verilog-mode.el
@@ -146,7 +146,7 @@ e/verilog-mode.el.gz : e/verilog-mode.el
 	gzip --best $< --stdout > $@
 
 x/verilog-mode.elc : x/verilog-mode.el
-	$(XEMACS) $(ELC) x/verilog-mode.el
+	-$(XEMACS) $(ELC) x/verilog-mode.el
 
 e/verilog-mode.elc : e/verilog-mode.el
 	$(EMACS) $(ELC) e/verilog-mode.el
