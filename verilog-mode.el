@@ -1020,6 +1020,19 @@ SystemVerilog designs."
   :type 'string)
 (put 'verilog-assignment-delay 'safe-local-variable 'stringp)
 
+(defcustom verilog-auto-arg-format 'packed
+  "Formatting to use for AUTOARG signal names.
+If 'packed', then as many inputs and outputs that fit within
+`fill-column' will be put onto one line.
+
+If 'single', then a single input or output will be put onto each
+line."
+  :type '(radio (const :tag "Line up Assignments and Declarations" packed)
+		(const :tag "Line up Assignment statements" single))
+  :group 'verilog-mode-auto)
+(put 'verilog-auto-arg-format 'safe-local-variable
+     '(lambda (x) (memq x '(packed single))))
+
 (defcustom verilog-auto-arg-sort nil
   "Non-nil means AUTOARG signal names will be sorted, not in declaration order.
 Declaration order is advantageous with order based instantiations
@@ -2907,7 +2920,7 @@ See also `verilog-font-lock-extra-types'.")
 	   '(
 	     "and" "bit" "buf" "bufif0" "bufif1" "cmos" "defparam"
 	     "event" "genvar" "inout" "input" "integer" "localparam"
-	     "logic" "mailbox" "nand" "nmos" "not" "notif0" "notif1" "or"
+	     "logic" "mailbox" "nand" "nmos" "nor" "not" "notif0" "notif1" "or"
 	     "output" "parameter" "pmos" "pull0" "pull1" "pulldown" "pullup"
 	     "rcmos" "real" "realtime" "reg" "rnmos" "rpmos" "rtran"
 	     "rtranif0" "rtranif1" "semaphore" "signed" "struct" "supply"
@@ -3160,7 +3173,7 @@ and `verilog-scan'.")
   (setq verilog-scan-cache-tick nil))
 
 (defun verilog-scan-cache-ok-p ()
-  "Return t iff the scan cache is up to date."
+  "Return t if the scan cache is up to date."
   (or (and verilog-scan-cache-preserving
 	   (eq verilog-scan-cache-preserving (current-buffer))
 	   verilog-scan-cache-tick)
@@ -5094,7 +5107,11 @@ FILENAME to find directory to run in, or defaults to `buffer-file-name`."
 	(verilog-mode)
 	;; Without this force, it takes a few idle seconds
 	;; to get the color, which is very jarring
-	(when fontlocked (font-lock-fontify-buffer))))))
+        (unless (fboundp 'font-lock-ensure)
+          ;; We should use font-lock-ensure in preference to
+          ;; font-lock-fontify-buffer, but IIUC the problem this is supposed to
+          ;; solve only appears in Emacsen older than font-lock-ensure anyway.
+          (when fontlocked (font-lock-fontify-buffer)))))))
 
 
 ;;
@@ -5140,23 +5157,29 @@ Save the result unless optional NO-SAVE is t."
    ;; Make sure any sub-files we read get proper mode
    (setq-default major-mode 'verilog-mode)
    ;; Ditto files already read in
-   (mapc (lambda (buf)
-	   (when (buffer-file-name buf)
-	     (with-current-buffer buf
-	       (verilog-mode))))
-	 (buffer-list))
-   ;; Process the files
-   (mapcar (lambda (buf)
+   ;; Remember buffer list, so don't later pickup any verilog-getopt files
+   (let ((orig-buffer-list (buffer-list)))
+     (mapc (lambda (buf)
 	     (when (buffer-file-name buf)
-	       (save-excursion
-		 (if (not (file-exists-p (buffer-file-name buf)))
-		     (error
-		      (concat "File not found: " (buffer-file-name buf))))
-		 (message (concat "Processing " (buffer-file-name buf)))
-		 (set-buffer buf)
-		 (funcall funref)
-		 (unless no-save (save-buffer)))))
-	   (buffer-list))))
+	       (with-current-buffer buf
+		 (verilog-mode)
+		 (verilog-auto-reeval-locals)
+		 (verilog-getopt-flags))))
+	   orig-buffer-list)
+     ;; Process the files
+     (mapcar (lambda (buf)
+	       (when (buffer-file-name buf)
+		 (save-excursion
+		   (if (not (file-exists-p (buffer-file-name buf)))
+		       (error
+			(concat "File not found: " (buffer-file-name buf))))
+		   (message (concat "Processing " (buffer-file-name buf)))
+		   (set-buffer buf)
+		   (funcall funref)
+		   (when (and (not no-save)
+			      (buffer-modified-p)) ;; Avoid "no changes to be saved"
+		     (save-buffer)))))
+	     orig-buffer-list))))
 
 (defun verilog-batch-auto ()
   "For use with --batch, perform automatic expansions as a stand-alone tool.
@@ -9635,7 +9658,7 @@ Return modi if successful, else print message unless IGNORE-ERROR is true."
 		allow-cache
 		(setq modi (gethash module verilog-modi-lookup-cache))
 		(equal verilog-modi-lookup-last-current current)
-		;; Iff hit is in current buffer, then tick must match
+		;; If hit is in current buffer, then tick must match
 		(or (equal verilog-modi-lookup-last-tick (buffer-chars-modified-tick))
 		    (not (equal current (verilog-modi-file-or-buffer modi)))))
 	   ;;(message "verilog-modi-lookup: HIT %S" modi)
@@ -10613,7 +10636,7 @@ If FORCE, always reread it."
 ;;
 
 (defun verilog-auto-arg-ports (sigs message indent-pt)
-  "Print a list of ports for an AUTOINST.
+  "Print a list of ports for AUTOARG.
 Takes SIGS list, adds MESSAGE to front and inserts each at INDENT-PT."
   (when sigs
     (when verilog-auto-arg-sort
@@ -10625,13 +10648,20 @@ Takes SIGS list, adds MESSAGE to front and inserts each at INDENT-PT."
     (let ((space ""))
       (indent-to indent-pt)
       (while sigs
-	(cond ((> (+ 2 (current-column) (length (verilog-sig-name (car sigs)))) fill-column)
+	(cond ((equal verilog-auto-arg-format 'single)
+	       (insert space)
+	       (indent-to indent-pt)
+	       (setq space "\n"))
+	      ;; verilog-auto-arg-format 'packed
+	      ((> (+ 2 (current-column) (length (verilog-sig-name (car sigs)))) fill-column)
 	       (insert "\n")
-	       (indent-to indent-pt))
-	      (t (insert space)))
+	       (indent-to indent-pt)
+	       (setq space " "))
+	      (t
+	       (insert space)
+	       (setq space " ")))
 	(insert (verilog-sig-name (car sigs)) ",")
-	(setq sigs (cdr sigs)
-	      space " ")))))
+	(setq sigs (cdr sigs))))))
 
 (defun verilog-auto-arg ()
   "Expand AUTOARG statements.
@@ -10666,9 +10696,11 @@ Typing \\[verilog-auto] will make this into:
 	  output o;
 	endmodule
 
-The argument declarations may be printed in declaration order to best suit
-order based instantiations, or alphabetically, based on the
-`verilog-auto-arg-sort' variable.
+The argument declarations may be printed in declaration order to
+best suit order based instantiations, or alphabetically, based on
+the `verilog-auto-arg-sort' variable.
+
+Formatting is controlled with `verilog-auto-arg-format' variable.
 
 Any ports declared between the ( and /*AUTOARG*/ are presumed to be
 predeclared and are not redeclared by AUTOARG.  AUTOARG will make a
