@@ -3908,6 +3908,7 @@ With optional ARG, remove existing end of line comments."
 To call this from the command line, see \\[verilog-batch-indent]."
   (interactive)
   (verilog-mode)
+  (verilog-delete-trailing-whitespace)
   (indent-region (point-min) (point-max) nil))
 
 (defun verilog-insert-block ()
